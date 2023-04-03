@@ -33,7 +33,10 @@ class Proxy():
         return server, address
 
     def run(self) -> None:
-        pass
+        while True:
+            conn, addr = self.listener.accept()
+            data = conn.recv(BUF_SZ)
+            print(data)
 
     def receive(self, sock: socket) -> str:
         pass
