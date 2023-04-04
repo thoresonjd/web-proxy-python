@@ -13,6 +13,7 @@ import sys
 HOSTNAME = 'localhost'
 BUF_SZ = 1024
 BACKLOG = 5
+TIMEOUT = 1
 HTTP_PORT = 80
 HTTP_VERSION = 'HTTP/1.1'
 
@@ -53,16 +54,22 @@ class Proxy():
                 conn.close()
                 continue
             server_request = self.generate_request(host, port, path)
-            print(server_request)
-            self.send_request(server_request, host, port)
+            try:
+                response = self.send_request(server_request, (host, port))
+            except Exception as e:
+                print(e)
+                conn.close()
+                continue
+            conn.sendall(response)
             conn.close()
 
     @staticmethod
-    def parse_request(request: str) -> tuple:
+    def parse_request(request: bytes) -> tuple:
         """
         Parses and checks validity of incoming request.
         :param request: The initial request received from the client
         :return: The hostname, port, and path of the requested resource
+        :raises RequestError: Invalid request
         """
 
         method, uri, http_version = request.decode('UTF-8').split()
@@ -89,11 +96,21 @@ class Proxy():
         return f'GET {path} {HTTP_VERSION}\r\nHost: {host}\r\nConnection: close\r\n\r\n'
 
     @staticmethod
-    def send_request(request: str, host: str, port: int) -> None:
+    def send_request(request: str, address: tuple) -> bytes:
+        """
+        Sends a request to a server.
+        :param request: The request to send
+        :param address: The address of the server
+        :return: The response to the request
+        """
+        
         with socket(AF_INET, SOCK_STREAM) as server:
-            server.connect((host, port))
+            server.connect(address)
+            server.settimeout(TIMEOUT)
             server.sendall(request.encode('UTF-8'))
-            print(server.recv(BUF_SZ).decode('UTF-8'))
+            return server.recv(BUF_SZ)
+            # response = server.recv(BUF_SZ)
+            # return response.decode('UTF-8')
 
 def main() -> None:
     """Runs the web proxy program."""
