@@ -18,7 +18,7 @@ HTTP_VERSION = 'HTTP/1.1'
 
 class RequestError(ValueError):
     def __init__(self, message: str) -> None:
-        super().__init__(''.join(['Request Error: ', message]))
+        super().__init__(' '.join(['Request Error:', message]))
 
 class Proxy():
     def __init__(self, port: int) -> None:
@@ -43,10 +43,11 @@ class Proxy():
         
         while True:
             conn, addr = self.listener.accept()
-            request = conn.recv(BUF_SZ)
+            client_request = conn.recv(BUF_SZ)
             try:
-                host, port, path = self.parse_request(request)
-                print(host, port, path)
+                host, port, path = self.parse_request(client_request)
+                server_request = self.generate_request(host, port, path)
+                print(server_request)
             except RequestError as e:
                 print(e)
             conn.close()
@@ -62,13 +63,28 @@ class Proxy():
         method, uri, http_version = request.decode('UTF-8').split()
         uri = urlparse(uri)
         if not method == 'GET':
-            raise RequestError('Unsupported method')
+            raise RequestError('Unsupported HTTP method')
         if not uri.hostname:
             raise RequestError('Invalid URI')
         if not http_version == HTTP_VERSION:
-            raise RequestError('Unsupported version')
+            raise RequestError('Unsupported HTTP version')
         port = uri.port if uri.port else HTTP_PORT
         return uri.hostname, port, uri.path
+
+    @staticmethod
+    def generate_request(host: str, port: int, path: str) -> str:
+        """
+        Generates a request in HTTP message format
+        :param host: The host of the server to send the request to
+        :param port: The port of the server to send the request to
+        :param path: The path of the resource being requested
+        :return: A request in HTTP message format
+        """
+
+        request = ' '.join(['GET', path, HTTP_VERSION])
+        host = ' '.join(['Host:', host])
+        request = ''.join([request, '\r\n', host, '\r\n', 'Connection: close', '\r\n\r\n'])
+        return request
 
 def main() -> None:
     if len(sys.argv) != 2:
