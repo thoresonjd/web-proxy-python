@@ -33,14 +33,20 @@ class Proxy():
         return server, address
 
     def run(self) -> None:
+        """Execute the proxy"""
+        
         while True:
             conn, addr = self.listener.accept()
-            data = conn.recv(BUF_SZ)
-            print(data)
+            request = conn.recv(BUF_SZ)
+            host, port, path = self.parse_request(request)
+            conn.close()
 
-    def receive(self, sock: socket) -> str:
-        pass
-    
+    @staticmethod
+    def parse_request(request: str) -> tuple:
+        method, uri, http_version = request.decode('UTF-8').split()
+        uri = urlparse(uri)
+        return uri.hostname, uri.port, uri.path
+
     def send(self):
         pass
 
