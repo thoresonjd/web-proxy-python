@@ -13,6 +13,8 @@ import sys
 HOSTNAME = 'localhost'
 BUF_SZ = 1024
 BACKLOG = 5
+HTTP_PORT = 80
+HTTP_VERSION = 'HTTP/1.1'
 
 class RequestError(ValueError):
     def __init__(self, message: str) -> None:
@@ -44,24 +46,29 @@ class Proxy():
             request = conn.recv(BUF_SZ)
             try:
                 host, port, path = self.parse_request(request)
+                print(host, port, path)
             except RequestError as e:
                 print(e)
             conn.close()
 
     @staticmethod
     def parse_request(request: str) -> tuple:
+        """
+        Parses and checks validity of incoming request
+        :param request: The initial request received from the client
+        :return: The hostname, port, and path of the requested resource
+        """
+
         method, uri, http_version = request.decode('UTF-8').split()
         uri = urlparse(uri)
         if not method == 'GET':
             raise RequestError('Unsupported method')
         if not uri.hostname:
             raise RequestError('Invalid URI')
-        if not http_version == 'HTTP/1.1':
+        if not http_version == HTTP_VERSION:
             raise RequestError('Unsupported version')
-        return uri.hostname, uri.port, uri.path
-
-    def send(self):
-        pass
+        port = uri.port if uri.port else HTTP_PORT
+        return uri.hostname, port, uri.path
 
 def main() -> None:
     if len(sys.argv) != 2:
