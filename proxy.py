@@ -16,6 +16,7 @@ BACKLOG = 5
 TIMEOUT = 1
 HTTP_PORT = 80
 HTTP_VERSION = 'HTTP/1.1'
+DEFAULT_PATH = '/'
 
 class RequestError(ValueError):
     def __init__(self, message: str) -> None:
@@ -54,6 +55,7 @@ class Proxy():
                 conn.close()
                 continue
             server_request = self.generate_request(host, port, path)
+            print(server_request)
             try:
                 response = self.send_request(server_request, (host, port))
             except Exception as e:
@@ -81,7 +83,8 @@ class Proxy():
         if not http_version == HTTP_VERSION:
             raise RequestError('Unsupported HTTP version')
         port = uri.port if uri.port else HTTP_PORT
-        return uri.hostname, port, uri.path
+        path = uri.path if uri.path else DEFAULT_PATH
+        return uri.hostname, port, path
 
     @staticmethod
     def generate_request(host: str, port: int, path: str) -> str:
