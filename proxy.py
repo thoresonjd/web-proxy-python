@@ -11,14 +11,17 @@ from socket import *
 import sys
 
 HOSTNAME = 'localhost'
-BUF_SZ = 1024
+BUF_SZ = 4096
 BACKLOG = 5
 TIMEOUT = 1
 HTTP_PORT = 80
 HTTP_VERSION = 'HTTP/1.1'
 DEFAULT_PATH = '/'
+END_L = '\r\n'
 
 class RequestError(ValueError):
+    """Exception that is raised whenever a request is malformed."""
+
     def __init__(self, message: str) -> None:
         super().__init__(f'Request Error: {message}')
 
@@ -96,7 +99,9 @@ class Proxy():
         :return: A request in HTTP message format
         """
 
-        return f'GET {path} {HTTP_VERSION}\r\nHost: {host}\r\nConnection: close\r\n\r\n'
+        return f'GET {path} {HTTP_VERSION}{END_L}' \
+               f'Host: {host}{END_L}' \
+               f'Connection: close{END_L*2}'
 
     @staticmethod
     def send_request(request: str, address: tuple) -> bytes:
