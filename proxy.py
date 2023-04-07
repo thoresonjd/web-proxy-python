@@ -19,6 +19,7 @@ HTTP_PORT = 80
 HTTP_VERSION = 'HTTP/1.1'
 HTTP_METHODS = {'GET'}
 HTTP_CODES = {200, 404, INTRNL_ERR}
+CACHE_DIR = 'cache'
 DEFAULT_PATH = '/'
 END_L = '\r\n'
 
@@ -28,21 +29,35 @@ class RequestError(ValueError):
     def __init__(self, message: str) -> None:
         super().__init__(f'Request Error: {message}')
 
+class Cache():
+    """A class that manages cached HTTP queries."""
+
+    def __init__(self, dir: str) -> None:
+        """
+        Creates a cache.
+        :param dir: The directory of the cache
+        """
+
+        self.path = Path(f'./{dir}')
+        self.path.mkdir()
+
 class Proxy():
     """A proxy that caches HTTP traffic between clients and servers."""
 
     def __init__(self, port: int) -> None:
-        self.listener, self.address = self.start_server(HOSTNAME, port)
+        """Initializes the proxy."""
 
-    def start_server(self, host: str, port: int) -> tuple:
+        self.listener, self.address = self.start_server(port)
+        self.cache = Cache(CACHE_DIR)
+
+    def start_server(self, port: int) -> tuple:
         """
-        Creates a listening socket for the proxy.
-        :param host: The host name to listen from
+        Creates a listening socket on for the proxy on the current host.
         :param port: The port number to listen from
         :return: The listening socket and the socket's address
         """
 
-        address = (host, port)
+        address = (HOSTNAME, port)
         server = socket(AF_INET, SOCK_STREAM)
         server.bind(address)
         server.listen(BACKLOG)
@@ -65,9 +80,8 @@ class Proxy():
                 response = self.send_request(server_request, (host, port))
                 if self.status_code(response) not in HTTP_CODES:
                     response = self.generate_response(INTRNL_ERR, 'Internal Server Error', False)
-            finally:
-                conn.sendall(response.encode('UTF-8'))
-                conn.close()
+            conn.sendall(response.encode('UTF-8'))
+            conn.close()
 
     @staticmethod
     def parse_request(request: str) -> tuple:
