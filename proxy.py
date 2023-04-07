@@ -58,15 +58,16 @@ class Proxy():
                 method, host, port, path = self.parse_request(client_request)
             except RequestError as e:
                 print(e)
-                conn.close()
-                continue
-            server_request = self.generate_request(method, host, port, path)
-            print(server_request)
-            response = self.send_request(server_request, (host, port))
-            if self.status_code(response) not in HTTP_CODES:
                 response = self.generate_response(INTRNL_ERR, 'Internal Server Error', False)
-            conn.sendall(response.encode('UTF-8'))
-            conn.close()
+            else:
+                server_request = self.generate_request(method, host, port, path)
+                print(server_request)
+                response = self.send_request(server_request, (host, port))
+                if self.status_code(response) not in HTTP_CODES:
+                    response = self.generate_response(INTRNL_ERR, 'Internal Server Error', False)
+            finally:
+                conn.sendall(response.encode('UTF-8'))
+                conn.close()
 
     @staticmethod
     def parse_request(request: str) -> tuple:
