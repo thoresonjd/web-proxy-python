@@ -71,6 +71,14 @@ class Cache():
         with path.open(mode='w', encoding='UTF-8') as file:
             file.write(response)
 
+    def get(self, uri: str) -> str:
+        """Retrieves a cached response corresponding to a requested URI."""
+
+        filename = self.to_filename(uri)
+        path = Path(f'{self.dir}/{filename}')
+        with path.open(mode='r', encoding='UTF-8') as file:
+            return file.read()
+
     def is_cached(self, uri: str) -> bool:
         """
         Checks is a web page response is cached.
@@ -122,15 +130,16 @@ class Proxy():
                 print(e)
                 response = self.generate_response(INTRNL_ERR, 'Internal Server Error', False)
             else:
-                if self.cache.is_cached(f'{host}{path}'):
-                    print("is cached")
-                    continue
-                server_request = self.generate_request(method, host, port, path)
-                print(server_request)
-                response = self.send_request(server_request, (host, port))
-                if self.status_code(response) not in HTTP_CODES:
-                    response = self.generate_response(INTRNL_ERR, 'Internal Server Error', False)
-                self.cache.add(f'{host}{path}', response)
+                uri = f'{host}{path}'
+                if self.cache.is_cached(uri):
+                    response = self.cache.get(uri)
+                else:
+                    server_request = self.generate_request(method, host, port, path)
+                    response = self.send_request(server_request, (host, port))
+                    status_code, body = self.parse_response(response)
+                    if status_code not in HTTP_CODES:
+                        response = self.generate_response(INTRNL_ERR, 'Internal Server Error', False, body)
+                    self.cache.add(uri, response)
             conn.sendall(response.encode('UTF-8'))
             conn.close()
 
@@ -156,10 +165,12 @@ class Proxy():
         return method, uri.hostname, port, path
 
     @staticmethod
-    def status_code(response: str) -> int:
-        """Determines the status code of a response."""
+    def parse_response(response: str) -> int:
+        """Retrieves the status code and body of a response."""
         
-        return int(response.split()[1])
+        status_code = int(response.split()[1])
+        headers, body = response.split(END_L*2)[1]
+        return status_code, headers, body
 
     @staticmethod
     def generate_request(method: str, host: str, port: int, path: str) -> str:
@@ -177,18 +188,20 @@ class Proxy():
                f'Connection: close{END_L*2}'
 
     @staticmethod
-    def generate_response(status_code: int, message: str, hit: bool) -> str:
+    def generate_response(status_code: int, message: str, hit: bool, body: str) -> str:
         """
         Generates a response in HTTP message format.
         :param status_code: The status code of the response
         :param message: The status message of the response
         :param hit: True if there was a cache hit, False otherwise
+        :param body: The body of the response
         :return: An HTTP response
         """
 
         return f'{HTTP_VERSION} {status_code} {message}{END_L}' \
                f'Cache-Hit: {int(hit)}{END_L}' \
-               f'Connection: close{END_L*2}'
+               f'Connection: close{END_L*2}' \
+               f'{body}{END_L}'
 
     @staticmethod
     def send_request(request: str, address: tuple) -> str:
