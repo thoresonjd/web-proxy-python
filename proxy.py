@@ -62,15 +62,31 @@ class Cache():
     def add(self, uri: str, response: str) -> None:
         """
         Adds a web page response of a request to a cache.
-        :param uri: The URI of the web page requested
+        :param uri: The URI of the HTTP requested
         :param response: The response of the request
         """
 
-        uri = uri.replace('/', '$')
-        filename = f'{uri}.html'
+        filename = self.to_filename(uri)
         path = Path(f'{self.dir}/{filename}')
         with path.open(mode='w', encoding='UTF-8') as file:
             file.write(response)
+
+    def is_cached(self, uri: str) -> bool:
+        """
+        Checks is a web page response is cached.
+        :param uri: The URI of the HTTP request
+        :return: True if the response is cached, False otherwise
+        """
+
+        filename = self.to_filename(uri)
+        return Path(f'{self.dir}/{filename}').exists()
+
+    @staticmethod
+    def to_filename(uri: str) -> str:
+        """Converts a URI to a corresponding filename."""
+
+        uri = uri.replace('/', '$')
+        return f'{uri}.html'
 
 class Proxy():
     """A proxy that caches HTTP traffic between clients and servers."""
@@ -106,6 +122,9 @@ class Proxy():
                 print(e)
                 response = self.generate_response(INTRNL_ERR, 'Internal Server Error', False)
             else:
+                if self.cache.is_cached(f'{host}{path}'):
+                    print("is cached")
+                    continue
                 server_request = self.generate_request(method, host, port, path)
                 print(server_request)
                 response = self.send_request(server_request, (host, port))
