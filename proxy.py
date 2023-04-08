@@ -11,15 +11,10 @@ from pathlib import Path
 from socket import *
 import sys
 
-HOSTNAME = 'localhost'
-BUF_SZ = 4096
-BACKLOG = 5
-TIMEOUT = 1
-INTRNL_ERR = 500
-HTTP_PORT = 80
-HTTP_VERSION = 'HTTP/1.1'
-HTTP_METHODS = {'GET'}
-HTTP_CODES = {200, 404, INTRNL_ERR}
+HOSTNAME, BUF_SZ, BACKLOG, TIMEOUT = 'localhost', 4096, 5, 1
+OK, NOT_FOUND, INTRNL_ERR = 200, 404, 500
+HTTP_PORT, HTTP_VERSION = 80, 'HTTP/1.1'
+HTTP_METHODS, HTTP_CODES = {'GET'}, {OK, NOT_FOUND, INTRNL_ERR}
 CACHE_DIR = 'cache'
 DEFAULT_PATH = '/'
 END_L = '\r\n'
@@ -30,7 +25,7 @@ class RequestError(ValueError):
     def __init__(self, message: str) -> None:
         super().__init__(f'Request Error: {message}')
 
-class Cache():
+class Cache(object):
     """A class that manages cached HTTP queries."""
 
     def __init__(self, dir: str) -> None:
@@ -93,10 +88,9 @@ class Cache():
     def to_filename(uri: str) -> str:
         """Converts a URI to a corresponding filename."""
 
-        uri = uri.replace('/', '$')
-        return f'{uri}.html'
+        return ''.join([uri.replace('/', '$'), '.html'])
 
-class Proxy():
+class Proxy(object):
     """A proxy that caches HTTP traffic between clients and servers."""
 
     def __init__(self, port: int) -> None:
@@ -132,14 +126,16 @@ class Proxy():
             else:
                 uri = f'{host}{path}'
                 if self.cache.is_cached(uri):
-                    response = self.cache.get(uri)
+                    body = self.cache.get(uri)
+                    response = self.generate_response(OK, 'OK', True, body)
                 else:
                     server_request = self.generate_request(method, host, port, path)
                     response = self.send_request(server_request, (host, port))
                     status_code, body = self.parse_response(response)
-                    if status_code not in HTTP_CODES:
+                    if status_code == OK:
+                        self.cache.add(uri, body)
+                    elif status_code not in HTTP_CODES:
                         response = self.generate_response(INTRNL_ERR, 'Internal Server Error', False, body)
-                    self.cache.add(uri, response)
             conn.sendall(response.encode('UTF-8'))
             conn.close()
 
@@ -169,8 +165,8 @@ class Proxy():
         """Retrieves the status code and body of a response."""
         
         status_code = int(response.split()[1])
-        headers, body = response.split(END_L*2)[1]
-        return status_code, headers, body
+        body = response.split(END_L*2)[1]
+        return status_code, body
 
     @staticmethod
     def generate_request(method: str, host: str, port: int, path: str) -> str:
