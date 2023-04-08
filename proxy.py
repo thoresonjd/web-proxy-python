@@ -39,11 +39,12 @@ class Cache():
         :param dir: The directory of the cache
         """
 
-        self.path = Path(f'./{dir}')
-        if self.path.exists():
-            self.clear_cache(self.path)
+        self.dir = f'./{dir}'
+        path = Path(self.dir)
+        if path.exists():
+            self.clear_cache(path)
         else:
-            self.path.mkdir()
+            path.mkdir()
     
     @staticmethod
     def clear_cache(path: Path) -> None:
@@ -57,6 +58,19 @@ class Cache():
                 child.unlink()
             else:
                 clear_cache(child)
+    
+    def add(self, uri: str, response: str) -> None:
+        """
+        Adds a web page response of a request to a cache.
+        :param uri: The URI of the web page requested
+        :param response: The response of the request
+        """
+
+        uri = uri.replace('/', '$')
+        filename = f'{uri}.html'
+        path = Path(f'{self.dir}/{filename}')
+        with path.open(mode='w', encoding='UTF-8') as file:
+            file.write(response)
 
 class Proxy():
     """A proxy that caches HTTP traffic between clients and servers."""
@@ -97,6 +111,7 @@ class Proxy():
                 response = self.send_request(server_request, (host, port))
                 if self.status_code(response) not in HTTP_CODES:
                     response = self.generate_response(INTRNL_ERR, 'Internal Server Error', False)
+                self.cache.add(f'{host}{path}', response)
             conn.sendall(response.encode('UTF-8'))
             conn.close()
 
