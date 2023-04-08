@@ -2,6 +2,7 @@
 Web Proxy
 :file: proxy.py
 :author: Justin Thoreson
+:date: 19 April 2023
 :version: 1.0
 """
 
@@ -34,12 +35,28 @@ class Cache():
 
     def __init__(self, dir: str) -> None:
         """
-        Creates a cache.
+        Creates a cache or clears it if one does already exists.
         :param dir: The directory of the cache
         """
 
         self.path = Path(f'./{dir}')
-        self.path.mkdir()
+        if self.path.exists():
+            self.clear_cache(self.path)
+        else:
+            self.path.mkdir()
+    
+    @staticmethod
+    def clear_cache(path: Path) -> None:
+        """
+        Recursively clears all files from the cache.
+        :param path: A path object to clear files from
+        """
+
+        for child in path.iterdir():
+            if child.is_file():
+                child.unlink()
+            else:
+                clear_cache(child)
 
 class Proxy():
     """A proxy that caches HTTP traffic between clients and servers."""
