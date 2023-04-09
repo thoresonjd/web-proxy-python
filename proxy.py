@@ -38,13 +38,16 @@ class HTTPRequest(object):
 
     def parse_request(self, request: bytes) -> None:
         """
-        Parses the contents of an HTTP request.
+        Parses and validates the contents of an HTTP request.
         :param request: The original HTTP request
         :raises RequestError: Invalid request
         """
 
         parsed = request.decode('UTF-8').split(END_L)
-        method, uri, self.version = parsed[0].split(maxsplit=2)
+        request_line = parsed[0].split()
+        if len(request_line) != 3:
+            raise RequestError('Malformed request')
+        method, uri, self.version = request_line
         self.method = method.upper()
         if self.method not in HTTP_METHODS:
             raise RequestError(f'Unsupported or unrecognized HTTP method: {method}')
@@ -55,8 +58,8 @@ class HTTPRequest(object):
             if header:
                 self.modify_header(*header.split(': ', 1))
         uri = urlparse(uri)
-        if not uri.hostname and not self.headers['Host']:
-            raise RequestError('Invalid URI')
+        if not uri.hostname and 'Host' not in self.headers:
+            raise RequestError('Malformed request: Invalid URI')
         self.host = uri.hostname if uri.hostname else self.headers['Host']
         self.port = uri.port if uri.port else HTTP_PORT
         self.path = uri.path if uri.path else DEFAULT_PATH
@@ -313,7 +316,7 @@ class Proxy(object):
                 request = HTTPRequest(conn.recv(BUF_SZ))
                 print(f'Received message from client:\n{request}')
             except RequestError as e:
-                print(e)
+                print(type(e))
                 is_cached = False
                 response = HTTPResponse.create_response(INTRNL_ERR, 'Internal Server Error')
             else:
@@ -350,18 +353,23 @@ class Proxy(object):
             request.get_host(),
             request.get_path()
         )
-        print(f'Sending the following message to proxy to server:\n{server_request}')
-        response = self.transmit_request(server_request)
-        print('Response received from server...')
-        if response.get_status_code() == OK:
-            print(f'Status code is {OK}, caching...')
-            self.cache.write(uri, response.get_body())
-        elif response.get_status_code() not in HTTP_CODES:
-            response = HTTPResponse.create_response(
-                INTRNL_ERR,
-                'Internal Server Error',
-                response.get_body()
-            )
+        try:
+            print(f'Sending the following message to proxy to server:\n{server_request}')
+            response = self.transmit_request(server_request)
+        except RequestError as e:
+            print(e)
+            response = HTTPResponse.create_response(INTRNL_ERR, 'Internal Server Error')
+        else:
+            print('Response received from server...')
+            if response.get_status_code() == OK:
+                print(f'Status code is {OK}, caching...')
+                self.cache.write(uri, response.get_body())
+            elif response.get_status_code() not in HTTP_CODES:
+                response = HTTPResponse.create_response(
+                    INTRNL_ERR,
+                    'Internal Server Error',
+                    response.get_body()
+                )
         return response
 
     @staticmethod
@@ -370,14 +378,18 @@ class Proxy(object):
         Sends a request to a server.
         :param request: The request to send
         :return: The response to the request
+        :raises RequestError: Failed request
         """
-        
-        with socket(AF_INET, SOCK_STREAM) as server:
-            address = (request.get_host(), request.get_port())
-            server.connect(address)
-            server.settimeout(TIMEOUT)
-            server.sendall(bytes(request))
-            return Proxy.receive_response(server)
+
+        try:
+            with socket(AF_INET, SOCK_STREAM) as server:
+                address = (request.get_host(), request.get_port())
+                server.connect(address)
+                server.settimeout(TIMEOUT)
+                server.sendall(bytes(request))
+                return Proxy.receive_response(server)
+        except (timeout, gaierror) as e:
+            raise RequestError(e)
 
     @staticmethod
     def receive_response(sock: socket) -> HTTPResponse:
