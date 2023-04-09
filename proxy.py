@@ -23,7 +23,81 @@ class RequestError(ValueError):
     """Exception that is raised whenever a request is malformed."""
 
     def __init__(self, message: str) -> None:
-        super().__init__(f'Request Error: {message}')
+        super().__init__(f'Request Error: {message}')        
+
+class HTTPResponse(object):
+    """A wrapper class for an HTTP response."""
+
+    def __init__(self, response: str) -> None:
+        """
+        Initializes an HTTP response object.
+        :param response: The original HTTP response
+        """
+
+        self.parse_response(response)
+
+    def parse_response(self, response: bytes) -> None:
+        """
+        Parses the contents of an HTTP response.
+        :param response: The original HTTP response
+        """
+
+        parsed = response.decode('UTF-8').split(END_L*2)
+        headers = parsed[0].split(END_L)
+        status_line = headers[0].split()
+        self.version = status_line[0]
+        self.status_code = int(status_line[1])
+        self.status_message = ' '.join(status_line[2:])
+        self.headers = {}
+        for header in headers[1:]:
+            self.modify_header(*header.split(': ', 1))
+        self.body = parsed[1] if len(parsed) > 1 else ''
+
+    def modify_header(self, key: str, value: str) -> None:
+        """
+        Adds or updates a header to the response.
+        :param key: The header's name
+        :param value: The header's value
+        """
+
+        self.headers[key] = value
+
+    def has_full_body(self) -> bool:
+        """Determines if the full body of a response is contained."""
+
+        return len(self.body.encode('UTF-8')) == int(self.headers['Content-Length'])
+
+    def extend_body(self, addend: str) -> None:
+        """Extends the body of the response."""
+
+        self.body = ''.join([self.body, addend])
+
+    def get_status_code(self) -> int:
+        """Retrieves the status code of the response."""
+
+        return self.status_code
+
+    def get_header(self, key: str) -> str:
+        """
+        Retrieves the value of a header within the response.
+        :param key: The name of the header to get the value for
+        """
+
+        return self.headers[key]
+
+    def get_body(self) -> str:
+        """Retrieves the body of the response."""
+
+        return self.body
+
+    def __repr__(self) -> str:
+        status_line = f'{self.version} {self.status_code} {self.status_message}'
+        headers = ''.join([f'{key}: {value}{END_L}' for key, value in self.headers.items()])
+        return END_L.join([status_line, headers, self.body])
+
+    def __bytes__(self) -> bytes:
+        return self.__repr__().encode('UTF-8')
+
 
 class Cache(object):
     """A class that manages cached HTTP queries."""
@@ -54,7 +128,7 @@ class Cache(object):
             else:
                 clear_cache(child)
     
-    def add(self, uri: str, response: str) -> None:
+    def write(self, uri: str, response: str) -> None:
         """
         Adds a web page response of a request to a cache.
         :param uri: The URI of the HTTP requested
@@ -65,12 +139,12 @@ class Cache(object):
         path = Path(f'{self.dir}/{filename}')
         path.write_text(response)
 
-    def get(self, uri: str) -> str:
+    def read(self, uri: str) -> str:
         """Retrieves a cached response corresponding to a requested URI."""
 
         filename = self.to_filename(uri)
         path = Path(f'{self.dir}/{filename}')
-        path.read_text()
+        return path.read_text()
 
     def is_cached(self, uri: str) -> bool:
         """
@@ -114,37 +188,37 @@ class Proxy(object):
         """Executes the proxy."""
         
         while True:
-            print('\n******************** Ready to serve ********************')
+            print('\n\n******************** Ready to serve ********************')
             conn, addr = self.listener.accept()
             print(f'Received client connection from {addr}')
             client_request = conn.recv(BUF_SZ).decode('UTF-8')
-            print(f'Received message from client: {client_request}')
+            print(f'Received message from client:\n{client_request}')
             try:
                 method, host, port, path = self.parse_request(client_request)
             except RequestError as e:
                 print(e)
-                response = self.generate_response(INTRNL_ERR, 'Internal Server Error', False)
+                response = self.generate_response(INTRNL_ERR, 'Internal Server Error')
             else:
                 uri = f'{host}{path}'
-                if self.cache.is_cached(uri):
+                is_cached = self.cache.is_cached(uri)
+                if is_cached:
                     print('Yay! The requested file is in the cache...')
-                    body = self.cache.get(uri)
-                    response = self.generate_response(OK, 'OK', True, body)
+                    body = self.cache.read(uri)
+                    response = self.generate_response(OK, 'OK', body)
                 else:
                     print('Oops! No cache hit! Requesting origin server for the file..')
                     server_request = self.generate_request(method, host, port, path)
-                    print(f'Sending the following message to proxy to server: {server_request}')
-                    headers, body = self.send_request(server_request, (host, port))
-                    status_code = self.status_code(headers)
+                    print(f'Sending the following message to proxy to server:\n{server_request}')
+                    response = self.transmit_request(server_request, (host, port))
                     print('Response received from server...')
-                    if status_code == OK:
-                        print(f'Status code it {OK}, caching...')
-                        self.cache.add(uri, body)
-                        response = f'{headers}{body}'
-                    elif status_code not in HTTP_CODES:
-                        response = self.generate_response(INTRNL_ERR, 'Internal Server Error', False, body)
+                    if response.get_status_code() == OK:
+                        print(f'Status code is {OK}, caching...')
+                        self.cache.write(uri, response.get_body())
+                    elif response.get_status_code() not in HTTP_CODES:
+                        response = self.generate_response(INTRNL_ERR, 'Internal Server Error', response.get_body())
+            response.modify_header('Cache-Hit', int(is_cached))
             print('Now responding to the client...')
-            conn.sendall(response.encode('UTF-8'))
+            conn.sendall(bytes(response))
             print('All done! Closing socket...')
             conn.close()
 
@@ -170,12 +244,6 @@ class Proxy(object):
         return method, uri.hostname, port, path
 
     @staticmethod
-    def status_code(headers: str) -> int:
-        """Retrieves the status code of a response."""
-        
-        return int(headers.split()[1])
-
-    @staticmethod
     def generate_request(method: str, host: str, port: int, path: str) -> str:
         """
         Generates a request in HTTP message format.
@@ -191,25 +259,24 @@ class Proxy(object):
                f'Connection: close{END_L*2}'
 
     @staticmethod
-    def generate_response(status_code: int, message: str, hit: bool, body: str) -> str:
+    def generate_response(status_code: int, message: str, body: str = '') -> str:
         """
         Generates a response in HTTP message format.
         :param status_code: The status code of the response
         :param message: The status message of the response
-        :param hit: True if there was a cache hit, False otherwise
         :param body: The body of the response
         :return: An HTTP response
         """
 
         content_length = len(body.encode('UTF-8'))
-        return f'{HTTP_VERSION} {status_code} {message}{END_L}' \
-               f'Content-Length: {content_length}'
-               f'Cache-Hit: {int(hit)}{END_L}' \
-               f'Connection: close{END_L*2}' \
-               f'{body}{END_L}'
+        response = f'{HTTP_VERSION} {status_code} {message}{END_L}' \
+                   f'Content-Length: {content_length}{END_L}' \
+                   f'Connection: close{END_L*2}' \
+                   f'{body}'
+        return HTTPResponse(response.encode('UTF-8'))
 
     @staticmethod
-    def send_request(request: str, address: tuple) -> str:
+    def transmit_request(request: str, address: tuple) -> str:
         """
         Sends a request to a server.
         :param request: The request to send
@@ -221,21 +288,17 @@ class Proxy(object):
             server.connect(address)
             server.settimeout(TIMEOUT)
             server.sendall(request.encode('UTF-8'))
-            response = server.recv(BUF_SZ).decode('UTF-8')
-            tokens = response.split(END_L*2)
-            headers = tokens[0]
-            body = tokens[1] if len(tokens) > 1 else ''
-            content_length = 0
-            for header in headers.split(END_L):
-                if header.lower().find('content-length') > -1:
-                    content_length = int(header.split(':')[1].strip())
-            received = len(body.encode('UTF-8'))
-            while received < content_length:
-                data = server.recv(BUF_SZ)
-                if not data: break
-                received += len(data)
-                body += data.decode('UTF-8')
-            return headers, body
+            response = HTTPResponse(server.recv(BUF_SZ))
+            if not response.has_full_body():
+                body = response.get_body()
+                received = len(body.encode('UTF-8'))
+                content_length = int(response.get_header('Content-Length'))
+                while received < content_length:
+                    data = server.recv(BUF_SZ)
+                    if not data: break
+                    received += len(data)
+                    response.extend_body(data.decode('UTF-8'))
+            return response
 
 def has_valid_args() -> bool:
     """Checks the validity of command line arguments."""
