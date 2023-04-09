@@ -63,16 +63,14 @@ class Cache(object):
 
         filename = self.to_filename(uri)
         path = Path(f'{self.dir}/{filename}')
-        with path.open(mode='w', encoding='UTF-8') as file:
-            file.write(response)
+        path.write_text(response)
 
     def get(self, uri: str) -> str:
         """Retrieves a cached response corresponding to a requested URI."""
 
         filename = self.to_filename(uri)
         path = Path(f'{self.dir}/{filename}')
-        with path.open(mode='r', encoding='UTF-8') as file:
-            return file.read()
+        path.read_text()
 
     def is_cached(self, uri: str) -> bool:
         """
@@ -88,7 +86,7 @@ class Cache(object):
     def to_filename(uri: str) -> str:
         """Converts a URI to a corresponding filename."""
 
-        return ''.join([uri.replace('/', '$'), '.html'])
+        return ''.join([uri.replace('/', '$$$'), '.html'])
 
 class Proxy(object):
     """A proxy that caches HTTP traffic between clients and servers."""
@@ -130,10 +128,11 @@ class Proxy(object):
                     response = self.generate_response(OK, 'OK', True, body)
                 else:
                     server_request = self.generate_request(method, host, port, path)
-                    response = self.send_request(server_request, (host, port))
-                    status_code, body = self.parse_response(response)
+                    headers, body = self.send_request(server_request, (host, port))
+                    status_code = self.status_code(headers)
                     if status_code == OK:
                         self.cache.add(uri, body)
+                        response = f'{headers}{body}'
                     elif status_code not in HTTP_CODES:
                         response = self.generate_response(INTRNL_ERR, 'Internal Server Error', False, body)
             conn.sendall(response.encode('UTF-8'))
@@ -161,12 +160,10 @@ class Proxy(object):
         return method, uri.hostname, port, path
 
     @staticmethod
-    def parse_response(response: str) -> int:
-        """Retrieves the status code and body of a response."""
+    def status_code(headers: str) -> int:
+        """Retrieves the status code of a response."""
         
-        status_code = int(response.split()[1])
-        body = response.split(END_L*2)[1]
-        return status_code, body
+        return int(headers.split()[1])
 
     @staticmethod
     def generate_request(method: str, host: str, port: int, path: str) -> str:
@@ -212,7 +209,21 @@ class Proxy(object):
             server.connect(address)
             server.settimeout(TIMEOUT)
             server.sendall(request.encode('UTF-8'))
-            return server.recv(BUF_SZ).decode('UTF-8')
+            response = server.recv(BUF_SZ).decode('UTF-8')
+            tokens = response.split(END_L*2)
+            headers = tokens[0]
+            body = tokens[1] if len(tokens) > 1 else ''
+            content_length = 0
+            for header in headers.split(END_L):
+                if header.lower().find('content-length') > -1:
+                    content_length = int(header.split(':')[1].strip())
+            received = len(body.encode('UTF-8'))
+            while received < content_length:
+                data = server.recv(BUF_SZ)
+                if not data: break
+                received += len(data)
+                body += data.decode('UTF-8')
+            return headers, body
 
 def has_valid_args() -> bool:
     """Checks the validity of command line arguments."""
