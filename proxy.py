@@ -71,6 +71,21 @@ class HTTPRequest(object):
 
         self.headers[key] = value
 
+    @classmethod
+    def create_request(cls, method: str, host: str, path: str) -> 'HTTPRequest':
+        """
+        Generates a request in HTTP message format.
+        :param method: The HTTP method of the request
+        :param host: The host of the server to send the request to
+        :param path: The path of the resource being requested
+        :return: An HTTP request
+        """
+
+        request = f'{method.upper()} {path} {HTTP_VERSION}{END_L}' \
+                  f'Host: {host}{END_L}' \
+                  f'Connection: close{END_L*2}'
+        return cls(request.encode('UTF-8'))
+
     def get_method(self) -> str:
         """Retrieves the method of the request."""
 
@@ -154,6 +169,23 @@ class HTTPResponse(object):
         """Extends the body of the response."""
 
         self.body = f'{self.body}{addend}'
+
+    @classmethod
+    def create_response(cls, status_code: int, message: str, body: str = '') -> 'HTTPResponse':
+        """
+        Generates a response in HTTP message format.
+        :param status_code: The status code of the response
+        :param message: The status message of the response
+        :param body: The body of the response
+        :return: An HTTP response
+        """
+
+        content_length = len(body.encode('UTF-8'))
+        response = f'{HTTP_VERSION} {status_code} {message}{END_L}' \
+                   f'Content-Length: {content_length}{END_L}' \
+                   f'Connection: close{END_L*2}' \
+                   f'{body}'
+        return cls(response.encode('UTF-8'))
 
     def get_status_code(self) -> int:
         """Retrieves the status code of the response."""
@@ -283,17 +315,17 @@ class Proxy(object):
                 print(f'Received message from client:\n{client_request}')
             except RequestError as e:
                 print(e)
-                response = self.generate_response(INTRNL_ERR, 'Internal Server Error')
+                response = HTTPResponse.create_response(INTRNL_ERR, 'Internal Server Error')
             else:
                 uri = client_request.get_uri()
                 is_cached = self.cache.is_cached(uri)
                 if is_cached:
                     print('Yay! The requested file is in the cache...')
                     body = self.cache.read(uri)
-                    response = self.generate_response(OK, 'OK', body)
+                    response = HTTPResponse.create_response(OK, 'OK', body)
                 else:
                     print('Oops! No cache hit! Requesting origin server for the file..')
-                    server_request = self.generate_request(
+                    server_request = HTTPRequest.create_request(
                         client_request.get_method(),
                         client_request.get_host(),
                         client_request.get_path()
@@ -305,7 +337,7 @@ class Proxy(object):
                         print(f'Status code is {OK}, caching...')
                         self.cache.write(uri, response.get_body())
                     elif response.get_status_code() not in HTTP_CODES:
-                        response = self.generate_response(
+                        response = HTTPResponse.create_response(
                             INTRNL_ERR,
                             'Internal Server Error',
                             response.get_body()
@@ -315,38 +347,6 @@ class Proxy(object):
             conn.sendall(bytes(response))
             print('All done! Closing socket...')
             conn.close()
-
-    @staticmethod
-    def generate_request(method: str, host: str, path: str) -> HTTPRequest:
-        """
-        Generates a request in HTTP message format.
-        :param method: The HTTP method of the request
-        :param host: The host of the server to send the request to
-        :param path: The path of the resource being requested
-        :return: An HTTP request
-        """
-
-        request = f'{method.upper()} {path} {HTTP_VERSION}{END_L}' \
-                  f'Host: {host}{END_L}' \
-                  f'Connection: close{END_L*2}'
-        return HTTPRequest(request.encode('UTF-8'))
-
-    @staticmethod
-    def generate_response(status_code: int, message: str, body: str = '') -> HTTPResponse:
-        """
-        Generates a response in HTTP message format.
-        :param status_code: The status code of the response
-        :param message: The status message of the response
-        :param body: The body of the response
-        :return: An HTTP response
-        """
-
-        content_length = len(body.encode('UTF-8'))
-        response = f'{HTTP_VERSION} {status_code} {message}{END_L}' \
-                   f'Content-Length: {content_length}{END_L}' \
-                   f'Connection: close{END_L*2}' \
-                   f'{body}'
-        return HTTPResponse(response.encode('UTF-8'))
 
     @staticmethod
     def transmit_request(request: HTTPRequest) -> HTTPResponse:
@@ -361,17 +361,28 @@ class Proxy(object):
             server.connect(address)
             server.settimeout(TIMEOUT)
             server.sendall(bytes(request))
-            response = HTTPResponse(server.recv(BUF_SZ))
-            if not response.has_full_body():
-                body = response.get_body()
-                received = len(body.encode('UTF-8'))
-                content_length = int(response.get_header('Content-Length'))
-                while received < content_length:
-                    data = server.recv(BUF_SZ)
-                    if not data: break
-                    received += len(data)
-                    response.extend_body(data.decode('UTF-8'))
+            return Proxy.receive_response(server)
+
+    @staticmethod
+    def receive_response(sock: socket) -> HTTPResponse:
+        """
+        Receives a response from a server.
+        :param sock: The socket gateway to the connection with the server
+        :return: The response to the request
+        """
+
+        response = HTTPResponse(sock.recv(BUF_SZ))
+        if response.has_full_body():
             return response
+        body = response.get_body()
+        received = len(body.encode('UTF-8'))
+        content_length = int(response.get_header('Content-Length'))
+        while received < content_length:
+            data = sock.recv(BUF_SZ)
+            if not data: break
+            received += len(data)
+            response.extend_body(data.decode('UTF-8'))
+        return response
 
 def has_valid_args() -> bool:
     """Checks the validity of command line arguments."""
