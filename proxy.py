@@ -217,7 +217,6 @@ class HTTPResponse(object):
 
         return self.__repr__().encode('UTF-8')
 
-
 class Cache(object):
     """A class that manages cached HTTP queries."""
 
@@ -311,42 +310,59 @@ class Proxy(object):
             conn, addr = self.listener.accept()
             print(f'Received client connection from {addr}')
             try:
-                client_request = HTTPRequest(conn.recv(BUF_SZ))
-                print(f'Received message from client:\n{client_request}')
+                request = HTTPRequest(conn.recv(BUF_SZ))
+                print(f'Received message from client:\n{request}')
             except RequestError as e:
                 print(e)
+                is_cached = False
                 response = HTTPResponse.create_response(INTRNL_ERR, 'Internal Server Error')
             else:
-                uri = client_request.get_uri()
+                uri = request.get_uri()
                 is_cached = self.cache.is_cached(uri)
-                if is_cached:
-                    print('Yay! The requested file is in the cache...')
-                    body = self.cache.read(uri)
-                    response = HTTPResponse.create_response(OK, 'OK', body)
-                else:
-                    print('Oops! No cache hit! Requesting origin server for the file..')
-                    server_request = HTTPRequest.create_request(
-                        client_request.get_method(),
-                        client_request.get_host(),
-                        client_request.get_path()
-                    )
-                    print(f'Sending the following message to proxy to server:\n{server_request}')
-                    response = self.transmit_request(server_request)
-                    print('Response received from server...')
-                    if response.get_status_code() == OK:
-                        print(f'Status code is {OK}, caching...')
-                        self.cache.write(uri, response.get_body())
-                    elif response.get_status_code() not in HTTP_CODES:
-                        response = HTTPResponse.create_response(
-                            INTRNL_ERR,
-                            'Internal Server Error',
-                            response.get_body()
-                        )
+                response = self.retrieve_from_cache(uri) if is_cached else self.forward_to_server(request)
             response.modify_header('Cache-Hit', int(is_cached))
             print('Now responding to the client...')
             conn.sendall(bytes(response))
             print('All done! Closing socket...')
             conn.close()
+
+    def retrieve_from_cache(self, uri: str) -> HTTPResponse:
+        """
+        Retrieves the web page body of a cached response.
+        :param uri: The URI of the original HTTP request
+        :return: An HTTP response created with the cached web page body
+        """
+
+        print('Yay! The requested file is in the cache...')
+        body = self.cache.read(uri)
+        return HTTPResponse.create_response(OK, 'OK', body)
+
+    def forward_to_server(self, request: HTTPRequest) -> HTTPResponse:
+        """
+        Forwards a client request to the requested server.
+        :param request: The original HTTP request
+        :return: The response to the request
+        """
+
+        print('Oops! No cache hit! Requesting origin server for the file..')
+        server_request = HTTPRequest.create_request(
+            request.get_method(),
+            request.get_host(),
+            request.get_path()
+        )
+        print(f'Sending the following message to proxy to server:\n{server_request}')
+        response = self.transmit_request(server_request)
+        print('Response received from server...')
+        if response.get_status_code() == OK:
+            print(f'Status code is {OK}, caching...')
+            self.cache.write(uri, response.get_body())
+        elif response.get_status_code() not in HTTP_CODES:
+            response = HTTPResponse.create_response(
+                INTRNL_ERR,
+                'Internal Server Error',
+                response.get_body()
+            )
+        return response
 
     @staticmethod
     def transmit_request(request: HTTPRequest) -> HTTPResponse:
