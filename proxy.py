@@ -23,12 +23,95 @@ class RequestError(ValueError):
     """Exception that is raised whenever a request is malformed."""
 
     def __init__(self, message: str) -> None:
-        super().__init__(f'Request Error: {message}')        
+        super().__init__(f'Request Error: {message}')     
+
+class HTTPRequest(object):
+    """A wrapper class for an HTTP request."""
+
+    def __init__(self, request: bytes) -> None:
+        """
+        Initializes an HTTP request object.
+        :param request: The original HTTP request
+        """
+
+        self.parse_request(request)
+
+    def parse_request(self, request: bytes) -> None:
+        """
+        Parses the contents of an HTTP request.
+        :param request: The original HTTP request
+        :raises RequestError: Invalid request
+        """
+
+        parsed = request.decode('UTF-8').split(END_L)
+        method, uri, self.version = parsed[0].split(maxsplit=2)
+        self.method = method.upper()
+        if self.method not in HTTP_METHODS:
+            raise RequestError(f'Unsupported or unrecognized HTTP method: {method}')
+        if not self.version == HTTP_VERSION:
+            raise RequestError('Unsupported HTTP version')
+        self.headers = {}
+        for header in parsed[1:]:
+            if header:
+                self.modify_header(*header.split(': ', 1))
+        uri = urlparse(uri)
+        if not uri.hostname and not self.headers['Host']:
+            raise RequestError('Invalid URI')
+        self.host = uri.hostname if uri.hostname else self.headers['Host']
+        self.port = uri.port if uri.port else HTTP_PORT
+        self.path = uri.path if uri.path else DEFAULT_PATH
+        self.uri = f'{self.host}{self.path}'
+
+    def modify_header(self, key: str, value: str) -> None:
+        """
+        Adds or updates a header to the request.
+        :param key: The header's name
+        :param value: The header's value
+        """
+
+        self.headers[key] = value
+
+    def get_method(self) -> str:
+        """Retrieves the method of the request."""
+
+        return self.method
+    
+    def get_uri(self) -> str:
+        """Retrieves the URI of the request."""
+
+        return self.uri
+
+    def get_host(self) -> str:
+        """Retrieves the hostname of the request."""
+
+        return self.host
+
+    def get_port(self) -> int:
+        """Retrieves the port of the request."""
+
+        return self.port
+
+    def get_path(self) -> str:
+        """Retrieves the path of the request."""
+
+        return self.path
+
+    def __repr__(self) -> str:
+        """Retrieves the string representation of an HTTPRequest object."""
+
+        request_line = f'{self.method} {self.path} {self.version}'
+        headers = ''.join([f'{key}: {value}{END_L}' for key, value in self.headers.items()])
+        return f'{request_line}{END_L}{headers}{END_L}'
+
+    def __bytes__(self) -> bytes:
+        """Retrieves the bytestring representation of an HTTPRequest object."""
+
+        return self.__repr__().encode('UTF-8')
 
 class HTTPResponse(object):
     """A wrapper class for an HTTP response."""
 
-    def __init__(self, response: str) -> None:
+    def __init__(self, response: bytes) -> None:
         """
         Initializes an HTTP response object.
         :param response: The original HTTP response
@@ -70,7 +153,7 @@ class HTTPResponse(object):
     def extend_body(self, addend: str) -> None:
         """Extends the body of the response."""
 
-        self.body = ''.join([self.body, addend])
+        self.body = f'{self.body}{addend}'
 
     def get_status_code(self) -> int:
         """Retrieves the status code of the response."""
@@ -91,11 +174,15 @@ class HTTPResponse(object):
         return self.body
 
     def __repr__(self) -> str:
+        """Retrieves the string representation of an HTTPResponse object."""
+
         status_line = f'{self.version} {self.status_code} {self.status_message}'
         headers = ''.join([f'{key}: {value}{END_L}' for key, value in self.headers.items()])
         return END_L.join([status_line, headers, self.body])
 
     def __bytes__(self) -> bytes:
+        """Retrieves the bytestring representation of an HTTPResponse object."""
+
         return self.__repr__().encode('UTF-8')
 
 
@@ -191,15 +278,14 @@ class Proxy(object):
             print('\n\n******************** Ready to serve ********************')
             conn, addr = self.listener.accept()
             print(f'Received client connection from {addr}')
-            client_request = conn.recv(BUF_SZ).decode('UTF-8')
-            print(f'Received message from client:\n{client_request}')
             try:
-                method, host, port, path = self.parse_request(client_request)
+                client_request = HTTPRequest(conn.recv(BUF_SZ))
+                print(f'Received message from client:\n{client_request}')
             except RequestError as e:
                 print(e)
                 response = self.generate_response(INTRNL_ERR, 'Internal Server Error')
             else:
-                uri = f'{host}{path}'
+                uri = client_request.get_uri()
                 is_cached = self.cache.is_cached(uri)
                 if is_cached:
                     print('Yay! The requested file is in the cache...')
@@ -207,15 +293,23 @@ class Proxy(object):
                     response = self.generate_response(OK, 'OK', body)
                 else:
                     print('Oops! No cache hit! Requesting origin server for the file..')
-                    server_request = self.generate_request(method, host, port, path)
+                    server_request = self.generate_request(
+                        client_request.get_method(),
+                        client_request.get_host(),
+                        client_request.get_path()
+                    )
                     print(f'Sending the following message to proxy to server:\n{server_request}')
-                    response = self.transmit_request(server_request, (host, port))
+                    response = self.transmit_request(server_request)
                     print('Response received from server...')
                     if response.get_status_code() == OK:
                         print(f'Status code is {OK}, caching...')
                         self.cache.write(uri, response.get_body())
                     elif response.get_status_code() not in HTTP_CODES:
-                        response = self.generate_response(INTRNL_ERR, 'Internal Server Error', response.get_body())
+                        response = self.generate_response(
+                            INTRNL_ERR,
+                            'Internal Server Error',
+                            response.get_body()
+                        )
             response.modify_header('Cache-Hit', int(is_cached))
             print('Now responding to the client...')
             conn.sendall(bytes(response))
@@ -223,43 +317,22 @@ class Proxy(object):
             conn.close()
 
     @staticmethod
-    def parse_request(request: str) -> tuple:
-        """
-        Parses and checks validity of incoming request.
-        :param request: The initial request received from the client
-        :return: The hostname, port, and path of the requested resource
-        :raises RequestError: Invalid request
-        """
-
-        method, uri, http_version = request.split()
-        uri = urlparse(uri)
-        if method.upper() not in HTTP_METHODS:
-            raise RequestError(f'Unsupported or unrecognized HTTP method: {method}')
-        if not uri.hostname:
-            raise RequestError('Invalid URI')
-        if not http_version == HTTP_VERSION:
-            raise RequestError('Unsupported HTTP version')
-        port = uri.port if uri.port else HTTP_PORT
-        path = uri.path if uri.path else DEFAULT_PATH
-        return method, uri.hostname, port, path
-
-    @staticmethod
-    def generate_request(method: str, host: str, port: int, path: str) -> str:
+    def generate_request(method: str, host: str, path: str) -> HTTPRequest:
         """
         Generates a request in HTTP message format.
         :param method: The HTTP method of the request
         :param host: The host of the server to send the request to
-        :param port: The port of the server to send the request to
         :param path: The path of the resource being requested
         :return: An HTTP request
         """
 
-        return f'{method.upper()} {path} {HTTP_VERSION}{END_L}' \
-               f'Host: {host}{END_L}' \
-               f'Connection: close{END_L*2}'
+        request = f'{method.upper()} {path} {HTTP_VERSION}{END_L}' \
+                  f'Host: {host}{END_L}' \
+                  f'Connection: close{END_L*2}'
+        return HTTPRequest(request.encode('UTF-8'))
 
     @staticmethod
-    def generate_response(status_code: int, message: str, body: str = '') -> str:
+    def generate_response(status_code: int, message: str, body: str = '') -> HTTPResponse:
         """
         Generates a response in HTTP message format.
         :param status_code: The status code of the response
@@ -276,18 +349,18 @@ class Proxy(object):
         return HTTPResponse(response.encode('UTF-8'))
 
     @staticmethod
-    def transmit_request(request: str, address: tuple) -> str:
+    def transmit_request(request: HTTPRequest) -> HTTPResponse:
         """
         Sends a request to a server.
         :param request: The request to send
-        :param address: The address of the server
         :return: The response to the request
         """
         
         with socket(AF_INET, SOCK_STREAM) as server:
+            address = (request.get_host(), request.get_port())
             server.connect(address)
             server.settimeout(TIMEOUT)
-            server.sendall(request.encode('UTF-8'))
+            server.sendall(bytes(request))
             response = HTTPResponse(server.recv(BUF_SZ))
             if not response.has_full_body():
                 body = response.get_body()
