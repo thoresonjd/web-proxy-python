@@ -114,8 +114,11 @@ class Proxy(object):
         """Executes the proxy."""
         
         while True:
+            print('\n******************** Ready to serve ********************')
             conn, addr = self.listener.accept()
+            print(f'Received client connection from {addr}')
             client_request = conn.recv(BUF_SZ).decode('UTF-8')
+            print(f'Received message from client: {client_request}')
             try:
                 method, host, port, path = self.parse_request(client_request)
             except RequestError as e:
@@ -124,18 +127,25 @@ class Proxy(object):
             else:
                 uri = f'{host}{path}'
                 if self.cache.is_cached(uri):
+                    print('Yay! The requested file is in the cache...')
                     body = self.cache.get(uri)
                     response = self.generate_response(OK, 'OK', True, body)
                 else:
+                    print('Oops! No cache hit! Requesting origin server for the file..')
                     server_request = self.generate_request(method, host, port, path)
+                    print(f'Sending the following message to proxy to server: {server_request}')
                     headers, body = self.send_request(server_request, (host, port))
                     status_code = self.status_code(headers)
+                    print('Response received from server...')
                     if status_code == OK:
+                        print(f'Status code it {OK}, caching...')
                         self.cache.add(uri, body)
                         response = f'{headers}{body}'
                     elif status_code not in HTTP_CODES:
                         response = self.generate_response(INTRNL_ERR, 'Internal Server Error', False, body)
+            print('Now responding to the client...')
             conn.sendall(response.encode('UTF-8'))
+            print('All done! Closing socket...')
             conn.close()
 
     @staticmethod
@@ -191,7 +201,9 @@ class Proxy(object):
         :return: An HTTP response
         """
 
+        content_length = len(body.encode('UTF-8'))
         return f'{HTTP_VERSION} {status_code} {message}{END_L}' \
+               f'Content-Length: {content_length}'
                f'Cache-Hit: {int(hit)}{END_L}' \
                f'Connection: close{END_L*2}' \
                f'{body}{END_L}'
