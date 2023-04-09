@@ -34,9 +34,9 @@ class HTTPRequest(object):
         :param request: The original HTTP request
         """
 
-        self.parse_request(request)
+        self.__parse_request(request)
 
-    def parse_request(self, request: bytes) -> None:
+    def __parse_request(self, request: bytes) -> None:
         """
         Parses and validates the contents of an HTTP request.
         :param request: The original HTTP request
@@ -135,9 +135,9 @@ class HTTPResponse(object):
         :param response: The original HTTP response
         """
 
-        self.parse_response(response)
+        self.__parse_response(response)
 
-    def parse_response(self, response: bytes) -> None:
+    def __parse_response(self, response: bytes) -> None:
         """
         Parses the contents of an HTTP response.
         :param response: The original HTTP response
@@ -232,12 +232,12 @@ class Cache(object):
         self.dir = f'./{dir}'
         path = Path(self.dir)
         if path.exists():
-            self.clear_cache(path)
+            self.__clear_cache(path)
         else:
             path.mkdir()
     
     @staticmethod
-    def clear_cache(path: Path) -> None:
+    def __clear_cache(path: Path) -> None:
         """
         Recursively clears all files from the cache.
         :param path: A path object to clear files from
@@ -247,7 +247,7 @@ class Cache(object):
             if child.is_file():
                 child.unlink()
             else:
-                clear_cache(child)
+                __clear_cache(child)
     
     def write(self, uri: str, response: str) -> None:
         """
@@ -256,14 +256,14 @@ class Cache(object):
         :param response: The response of the request
         """
 
-        filename = self.to_filename(uri)
+        filename = self.__to_filename(uri)
         path = Path(f'{self.dir}/{filename}')
         path.write_text(response)
 
     def read(self, uri: str) -> str:
         """Retrieves a cached response corresponding to a requested URI."""
 
-        filename = self.to_filename(uri)
+        filename = self.__to_filename(uri)
         path = Path(f'{self.dir}/{filename}')
         return path.read_text()
 
@@ -274,11 +274,11 @@ class Cache(object):
         :return: True if the response is cached, False otherwise
         """
 
-        filename = self.to_filename(uri)
+        filename = self.__to_filename(uri)
         return Path(f'{self.dir}/{filename}').exists()
 
     @staticmethod
-    def to_filename(uri: str) -> str:
+    def __to_filename(uri: str) -> str:
         """Converts a URI to a corresponding filename."""
 
         return ''.join([uri.replace('/', '$$$'), '.html'])
@@ -289,10 +289,10 @@ class Proxy(object):
     def __init__(self, port: int) -> None:
         """Initializes the proxy."""
 
-        self.listener, self.address = self.start_server(port)
+        self.listener, self.address = self.__start_server(port)
         self.cache = Cache(CACHE_DIR)
 
-    def start_server(self, port: int) -> tuple:
+    def __start_server(self, port: int) -> tuple:
         """
         Creates a listening socket on for the proxy on the current host.
         :param port: The port number to listen from
@@ -322,14 +322,14 @@ class Proxy(object):
             else:
                 uri = request.get_uri()
                 is_cached = self.cache.is_cached(uri)
-                response = self.retrieve_from_cache(uri) if is_cached else self.forward_to_server(request)
+                response = self.__retrieve_from_cache(uri) if is_cached else self.__forward_to_server(request)
             response.modify_header('Cache-Hit', int(is_cached))
             print('Now responding to the client...')
             conn.sendall(bytes(response))
             print('All done! Closing socket...')
             conn.close()
 
-    def retrieve_from_cache(self, uri: str) -> HTTPResponse:
+    def __retrieve_from_cache(self, uri: str) -> HTTPResponse:
         """
         Retrieves the web page body of a cached response.
         :param uri: The URI of the original HTTP request
@@ -340,7 +340,7 @@ class Proxy(object):
         body = self.cache.read(uri)
         return HTTPResponse.create_response(OK, 'OK', body)
 
-    def forward_to_server(self, request: HTTPRequest) -> HTTPResponse:
+    def __forward_to_server(self, request: HTTPRequest) -> HTTPResponse:
         """
         Forwards a client request to the requested server.
         :param request: The original HTTP request
@@ -355,7 +355,7 @@ class Proxy(object):
         )
         try:
             print(f'Sending the following message to proxy to server:\n{server_request}')
-            response = self.transmit_request(server_request)
+            response = self.__transmit_request(server_request)
         except RequestError as e:
             print(e)
             response = HTTPResponse.create_response(INTRNL_ERR, 'Internal Server Error')
@@ -373,7 +373,7 @@ class Proxy(object):
         return response
 
     @staticmethod
-    def transmit_request(request: HTTPRequest) -> HTTPResponse:
+    def __transmit_request(request: HTTPRequest) -> HTTPResponse:
         """
         Sends a request to a server.
         :param request: The request to send
@@ -387,12 +387,12 @@ class Proxy(object):
                 server.connect(address)
                 server.settimeout(TIMEOUT)
                 server.sendall(bytes(request))
-                return Proxy.receive_response(server)
+                return Proxy.__receive_response(server)
         except (timeout, gaierror) as e:
             raise RequestError(e)
 
     @staticmethod
-    def receive_response(sock: socket) -> HTTPResponse:
+    def __receive_response(sock: socket) -> HTTPResponse:
         """
         Receives a response from a server.
         :param sock: The socket gateway to the connection with the server
