@@ -13,11 +13,11 @@ import sys
 
 HOSTNAME, BUF_SZ, BACKLOG, TIMEOUT = 'localhost', 4096, 5, 1
 OK, NOT_FOUND, INTRNL_ERR = 200, 404, 500
-HTTP_PORT, HTTP_VERSION = 80, 'HTTP/1.1'
+HTTP_PORT, HTTP_VERSION = 80, 1.1
 HTTP_METHODS, HTTP_CODES = {'GET'}, {OK, NOT_FOUND, INTRNL_ERR}
+DEFAULT_PATH, END_L = '/', '\r\n'
 CACHE_DIR = 'cache'
-DEFAULT_PATH = '/'
-END_L = '\r\n'
+MIN_PORT, MAX_PORT = 10000, 65535
 
 class RequestError(ValueError):
     """Exception that is raised whenever a request is malformed."""
@@ -43,27 +43,70 @@ class HTTPRequest(object):
         :raises RequestError: Invalid request
         """
 
-        parsed = request.decode('UTF-8').split(END_L)
+        method, uri, version, headers = self.__decode_request(request)
+        self.method = self.__parse_method(method)
+        self.version = self.__parse_version(version)
+        self.headers = self.__parse_headers(headers)
+        self.host, self.port, self.path, self.uri = self.__parse_uri(uri, self.headers)
+
+    @staticmethod
+    def __decode_request(request: bytes) -> tuple:
+        """Decodes the bytestring request."""
+
+        try:
+            parsed = request.decode('UTF-8').split(END_L)
+        except UnicodeDecodeError as e:
+            raise RequestError('Can not decode request')
         request_line = parsed[0].split()
         if len(request_line) != 3:
             raise RequestError('Malformed request')
-        method, uri, self.version = request_line
-        self.method = method.upper()
-        if self.method not in HTTP_METHODS:
-            raise RequestError(f'Unsupported or unrecognized HTTP method: {method}')
-        if not self.version == HTTP_VERSION:
-            raise RequestError('Unsupported HTTP version')
-        self.headers = {}
-        for header in parsed[1:]:
+        method, uri, version = request_line
+        headers = parsed[1:]
+        return method, uri, version, headers
+
+    @staticmethod
+    def __parse_method(method: str) -> str:
+        """Parses an HTTP method."""
+
+        parsed_method = method.upper()
+        if parsed_method not in HTTP_METHODS:
+            raise RequestError(f'Unsupported or unrecognized HTTP method: {method}') 
+        return parsed_method 
+
+    @staticmethod
+    def __parse_version(version: str) -> float:
+        """Parses an HTTP version."""
+
+        if not 'HTTP/' == version[:5] or not version[5:].replace('.', '', 1).isdigit():
+            raise RequestError(f'Unrecognized HTTP version: {version}')
+        version = float(version[5:])
+        if version > HTTP_VERSION:
+            raise RequestError(f'Unsupported HTTP version: {version}')
+        return version
+
+    @staticmethod
+    def __parse_headers(headers: str) -> dict:
+        """Parses headers within a request."""
+
+        parsed_headers = {}
+        for header in headers:
             if header:
-                self.modify_header(*header.split(': ', 1))
-        uri = urlparse(uri)
-        if not uri.hostname and 'Host' not in self.headers:
+                key, value = header.split(': ', 1)
+                parsed_headers[key] = value
+        return parsed_headers
+
+    @staticmethod
+    def __parse_uri(uri: str, headers: dict) -> tuple:
+        """Parses the URI of a request."""
+
+        parsed_uri = urlparse(uri)
+        if not parsed_uri.hostname and 'Host' not in headers:
             raise RequestError('Malformed request: Invalid URI')
-        self.host = uri.hostname if uri.hostname else self.headers['Host']
-        self.port = uri.port if uri.port else HTTP_PORT
-        self.path = uri.path if uri.path else DEFAULT_PATH
-        self.uri = f'{self.host}{self.path}'
+        host = parsed_uri.hostname if parsed_uri.hostname else headers['Host']
+        port = parsed_uri.port if parsed_uri.port else HTTP_PORT
+        path = parsed_uri.path if parsed_uri.path else DEFAULT_PATH
+        uri = f'{host}{path}'
+        return host, port, path, uri
 
     def modify_header(self, key: str, value: str) -> None:
         """
@@ -84,7 +127,7 @@ class HTTPRequest(object):
         :return: An HTTP request
         """
 
-        request = f'{method.upper()} {path} {HTTP_VERSION}{END_L}' \
+        request = f'{method.upper()} {path} HTTP/{HTTP_VERSION}{END_L}' \
                   f'Host: {host}{END_L}' \
                   f'Connection: close{END_L*2}'
         return cls(request.encode('UTF-8'))
@@ -117,7 +160,7 @@ class HTTPRequest(object):
     def __repr__(self) -> str:
         """Retrieves the string representation of an HTTPRequest object."""
 
-        request_line = f'{self.method} {self.path} {self.version}'
+        request_line = f'{self.method} {self.path} HTTP/{self.version}'
         headers = ''.join([f'{key}: {value}{END_L}' for key, value in self.headers.items()])
         return f'{request_line}{END_L}{headers}{END_L}'
 
@@ -146,7 +189,7 @@ class HTTPResponse(object):
         parsed = response.decode('UTF-8').split(END_L*2)
         headers = parsed[0].split(END_L)
         status_line = headers[0].split()
-        self.version = status_line[0]
+        self.version = status_line[0][5:]
         self.status_code = int(status_line[1])
         self.status_message = ' '.join(status_line[2:])
         self.headers = {}
@@ -184,7 +227,7 @@ class HTTPResponse(object):
         """
 
         content_length = len(body.encode('UTF-8'))
-        response = f'{HTTP_VERSION} {status_code} {message}{END_L}' \
+        response = f'HTTP/{HTTP_VERSION} {status_code} {message}{END_L}' \
                    f'Content-Length: {content_length}{END_L}' \
                    f'Connection: close{END_L*2}' \
                    f'{body}'
@@ -211,9 +254,9 @@ class HTTPResponse(object):
     def __repr__(self) -> str:
         """Retrieves the string representation of an HTTPResponse object."""
 
-        status_line = f'{self.version} {self.status_code} {self.status_message}'
+        status_line = f'HTTP/{self.version} {self.status_code} {self.status_message}'
         headers = ''.join([f'{key}: {value}{END_L}' for key, value in self.headers.items()])
-        return END_L.join([status_line, headers, self.body])
+        return END_L.join([status_line, headers, self.body, ''])
 
     def __bytes__(self) -> bytes:
         """Retrieves the bytestring representation of an HTTPResponse object."""
@@ -316,7 +359,7 @@ class Proxy(object):
                 request = HTTPRequest(conn.recv(BUF_SZ))
                 print(f'Received message from client:\n{request}')
             except RequestError as e:
-                print(type(e))
+                print(e)
                 is_cached = False
                 response = HTTPResponse.create_response(INTRNL_ERR, 'Internal Server Error')
             else:
@@ -363,7 +406,7 @@ class Proxy(object):
             print('Response received from server...')
             if response.get_status_code() == OK:
                 print(f'Status code is {OK}, caching...')
-                self.cache.write(uri, response.get_body())
+                self.cache.write(request.get_uri(), response.get_body())
             elif response.get_status_code() not in HTTP_CODES:
                 response = HTTPResponse.create_response(
                     INTRNL_ERR,
@@ -415,18 +458,24 @@ class Proxy(object):
 def has_valid_args() -> bool:
     """Checks the validity of command line arguments."""
 
-    return len(sys.argv) == 2 and sys.argv[1].isdigit()
-
+    return len(sys.argv) == 2 and \
+        sys.argv[1].isdigit() and \
+        MIN_PORT <= int(sys.argv[1]) <= MAX_PORT
 
 def main() -> None:
     """Runs the web proxy program."""
         
     if not has_valid_args():
         print('USAGE: python3 proxy.py <PORT>')
+        print(f'PORT must be a valid, unreserved TCP port between {MIN_PORT} and {MAX_PORT}')
         exit(1)
     port = int(sys.argv[1])
-    proxy = Proxy(port)
-    proxy.run()
+    try:
+        proxy = Proxy(port)
+        proxy.run()
+    except (KeyboardInterrupt, OSError) as e:
+        print(e)
+        print('Shutting down...')        
 
 if __name__ == '__main__':
     main()
