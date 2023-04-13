@@ -15,8 +15,7 @@ HOSTNAME, BUF_SZ, BACKLOG, TIMEOUT = 'localhost', 4096, 5, 1
 OK, NOT_FOUND, INTRNL_ERR = 200, 404, 500
 HTTP_PORT, HTTP_VERSION = 80, 1.1
 HTTP_METHODS, HTTP_CODES = {'GET'}, {OK, NOT_FOUND, INTRNL_ERR}
-DEFAULT_PATH, END_L = '/', '\r\n'
-CACHE_DIR = 'cache'
+DEFAULT_PATH, END_L, CACHE_DIR = '/', '\r\n', 'cache'
 MIN_PORT, MAX_PORT = 10000, 65535
 
 class RequestError(ValueError):
@@ -85,14 +84,14 @@ class HTTPRequest(object):
         return version
 
     @staticmethod
-    def __parse_headers(headers: str) -> dict:
+    def __parse_headers(headers: list) -> dict:
         """Parses headers within a request."""
 
         parsed_headers = {}
         for header in headers:
             if header:
-                key, value = header.split(': ', 1)
-                parsed_headers[key] = value
+                key, value = header.split(':', 1)
+                parsed_headers[key] = value.strip()
         return parsed_headers
 
     @staticmethod
@@ -189,12 +188,13 @@ class HTTPResponse(object):
         parsed = response.decode('UTF-8').split(END_L*2)
         headers = parsed[0].split(END_L)
         status_line = headers[0].split()
-        self.version = status_line[0][5:]
+        self.version = status_line[0].split('HTTP/')[1]
         self.status_code = int(status_line[1])
         self.status_message = ' '.join(status_line[2:])
         self.headers = {}
         for header in headers[1:]:
-            self.modify_header(*header.split(': ', 1))
+            key, value = header.split(':', 1)
+            self.modify_header(key, value.strip())
         self.body = parsed[1] if len(parsed) > 1 else ''
 
     def modify_header(self, key: str, value: str) -> None:
@@ -351,26 +351,35 @@ class Proxy(object):
     def run(self) -> None:
         """Executes the proxy."""
         
-        while True:
-            print('\n\n******************** Ready to serve ********************')
-            conn, addr = self.listener.accept()
-            print(f'Received client connection from {addr}')
-            try:
-                request = HTTPRequest(conn.recv(BUF_SZ))
-                print(f'Received message from client:\n{request}')
-            except RequestError as e:
-                print(e)
-                is_cached = False
-                response = HTTPResponse.create_response(INTRNL_ERR, 'Internal Server Error')
-            else:
-                uri = request.get_uri()
-                is_cached = self.cache.is_cached(uri)
-                response = self.__retrieve_from_cache(uri) if is_cached else self.__forward_to_server(request)
-            response.modify_header('Cache-Hit', int(is_cached))
-            print('Now responding to the client...')
-            conn.sendall(bytes(response))
-            print('All done! Closing socket...')
-            conn.close()
+        try:
+            while True:
+                self.__resolve()
+        except KeyboardInterrupt:
+            print('\nShutting down...')
+            self.listener.close()
+
+    def __resolve(self) -> None:
+        """Resolves an incoming client connection and request."""
+
+        print('\n\n******************** Ready to serve ********************')
+        conn, addr = self.listener.accept()
+        print(f'Received client connection from {addr}')
+        try:
+            request = HTTPRequest(conn.recv(BUF_SZ))
+            print(f'Received message from client:\n{request}')
+        except RequestError as e:
+            print(e)
+            is_cached = False
+            response = HTTPResponse.create_response(INTRNL_ERR, 'Internal Server Error')
+        else:
+            uri = request.get_uri()
+            is_cached = self.cache.is_cached(uri)
+            response = self.__retrieve_from_cache(uri) if is_cached else self.__forward_to_server(request)
+        response.modify_header('Cache-Hit', int(is_cached))
+        print('Now responding to the client...')
+        conn.sendall(bytes(response))
+        print('All done! Closing socket...')
+        conn.close()
 
     def __retrieve_from_cache(self, uri: str) -> HTTPResponse:
         """
@@ -472,10 +481,10 @@ def main() -> None:
     port = int(sys.argv[1])
     try:
         proxy = Proxy(port)
-        proxy.run()
-    except (KeyboardInterrupt, OSError) as e:
+    except OSError as e:
         print(e)
-        print('Shutting down...')        
+    else:
+        proxy.run()  
 
 if __name__ == '__main__':
     main()
