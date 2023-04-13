@@ -11,6 +11,8 @@ Justin Thoreson
 * `GET` requests
 * Status codes `200`, `404`, and `500`
 
+Since the proxy supports up to `HTTP/1.1` but uses non-persistent connections, it really just supports `HTTP/1.0`. Thus, we can humorously think of this proxy as supporting `HTTP/1.05`.
+
 ## **Usage**
 
 To execute the web proxy on `localhost`, run:
