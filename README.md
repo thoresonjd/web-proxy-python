@@ -1,13 +1,13 @@
 # **Web Proxy**
 
-A simple proxy server that handles HTTP requests and caches successful responses.
+A simple proxy server that handles HTTP requests between clients and servers and caches successful responses.
 
 ## **Author**
 
 Justin Thoreson
 
-## **Only supports**:
-* `HTTP/1.1` or earlier
+## **Supports**
+* `HTTP/1.1` and earlier
 * `GET` requests
 * Status codes `200`, `404`, and `500`
 

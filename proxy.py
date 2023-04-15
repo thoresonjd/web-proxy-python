@@ -4,6 +4,18 @@ Web Proxy
 :author: Justin Thoreson
 :date: 19 April 2023
 :version: 1.0
+
+A simple proxy server that resolves HTTP requests between clients and servers.
+Successful responses (status code 200) are stored within a cache directory.
+
+Supports:
+- HTTP/1.1 and earlier
+- GET requests
+- Status codes 200, 404, and 500
+
+Since the proxy supports up to HTTP/1.1 but uses non-persistent connections, it
+really just supports HTTP/1.0. Thus, we can humorously think of this proxy as
+supporting HTTP/1.05.
 """
 
 from urllib.parse import urlparse
