@@ -15,7 +15,8 @@ HOSTNAME, BUF_SZ, BACKLOG, TIMEOUT = 'localhost', 4096, 5, 1
 OK, NOT_FOUND, INTRNL_ERR = 200, 404, 500
 HTTP_PORT, HTTP_VERSION = 80, 1.1
 HTTP_METHODS, HTTP_CODES = {'GET'}, {OK, NOT_FOUND, INTRNL_ERR}
-DEFAULT_PATH, END_L, CACHE_DIR = '/', '\r\n', 'cache'
+DEFAULT_PATH, DEFAULT_FILENAME = '/', 'idx.html'
+END_L, CACHE_DIR = '\r\n', 'cache'
 MIN_PORT, MAX_PORT = 10000, 65535
 
 class RequestError(ValueError):
@@ -290,7 +291,8 @@ class Cache(object):
             if child.is_file():
                 child.unlink()
             else:
-                __clear_cache(child)
+                Cache.__clear_cache(child)
+                child.rmdir()
     
     def write(self, uri: str, response: str) -> None:
         """
@@ -299,16 +301,13 @@ class Cache(object):
         :param response: The response of the request
         """
 
-        filename = self.__to_filename(uri)
-        path = Path(f'{self.dir}/{filename}')
+        path = Path(self.__create_file_path(uri))
         path.write_text(response)
 
     def read(self, uri: str) -> str:
         """Retrieves a cached response corresponding to a requested URI."""
 
-        filename = self.__to_filename(uri)
-        path = Path(f'{self.dir}/{filename}')
-        return path.read_text()
+        return Path(self.__get_file_path(uri)).read_text()
 
     def is_cached(self, uri: str) -> bool:
         """
@@ -317,14 +316,21 @@ class Cache(object):
         :return: True if the response is cached, False otherwise
         """
 
-        filename = self.__to_filename(uri)
-        return Path(f'{self.dir}/{filename}').exists()
+        return Path(self.__get_file_path(uri)).exists()
 
-    @staticmethod
-    def __to_filename(uri: str) -> str:
-        """Converts a URI to a corresponding filename."""
+    def __create_file_path(self, uri: str) -> str:
+        """Creates a file path from the URI of a new response to cache."""
 
-        return ''.join([uri.replace('/', '$$$'), '.html'])
+        segments = uri.split('/')
+        directory = '/'.join([self.dir, *segments[:-1]])
+        path = Path(directory)
+        path.mkdir(parents=True, exist_ok=True)
+        return '/'.join([directory, segments[-1] if segments[-1] else DEFAULT_FILENAME])
+
+    def __get_file_path(self, uri: str) -> str:
+        """Converts a URI to a corresponding file path."""
+
+        return '/'.join([self.dir, f'{uri}{DEFAULT_FILENAME}' if uri[-1] == '/' else uri])
 
 class Proxy(object):
     """A proxy that caches HTTP traffic between clients and servers."""
@@ -417,11 +423,8 @@ class Proxy(object):
                 print(f'Status code is {OK}, caching...')
                 self.cache.write(request.get_uri(), response.get_body())
             elif response.get_status_code() not in HTTP_CODES:
-                response = HTTPResponse.create_response(
-                    INTRNL_ERR,
-                    'Internal Server Error',
-                    response.get_body()
-                )
+                print(f'Status code is {response.get_status_code()}, no cache writing')
+                response = HTTPResponse.create_response(INTRNL_ERR, 'Internal Server Error',)
         return response
 
     @staticmethod
@@ -440,7 +443,7 @@ class Proxy(object):
                 server.settimeout(TIMEOUT)
                 server.sendall(bytes(request))
                 return Proxy.__receive_response(server)
-        except (timeout, gaierror) as e:
+        except (timeout, gaierror, ConnectionRefusedError) as e:
             raise RequestError(e)
 
     @staticmethod
