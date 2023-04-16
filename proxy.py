@@ -269,7 +269,7 @@ class HTTPResponse(object):
 
         status_line = f'HTTP/{self.version} {self.status_code} {self.status_message}'
         headers = ''.join([f'{key}: {value}{END_L}' for key, value in self.headers.items()])
-        return END_L.join([status_line, headers, self.body, ''])
+        return END_L.join([status_line, headers, self.body])
 
     def __bytes__(self) -> bytes:
         """Retrieves the bytestring representation of an HTTPResponse object."""
@@ -383,8 +383,9 @@ class Proxy(object):
         conn, addr = self.listener.accept()
         print(f'Received client connection from {addr}')
         try:
-            request = HTTPRequest(conn.recv(BUF_SZ))
-            print(f'Received message from client:\n{request}')
+            request = conn.recv(BUF_SZ)
+            print(f'Received message from client: {request}')
+            request = HTTPRequest(request)
         except RequestError as e:
             print(e)
             is_cached = False
@@ -406,7 +407,7 @@ class Proxy(object):
         :return: An HTTP response created with the cached web page body
         """
 
-        print('Yay! The requested file is in the cache...')
+        print('Yay! The requested file was found in the cache!')
         body = self.cache.read(uri)
         return HTTPResponse.create_response(OK, 'OK', body)
 
@@ -417,7 +418,7 @@ class Proxy(object):
         :return: The response to the request
         """
 
-        print('Oops! No cache hit! Requesting origin server for the file..')
+        print('Oops! No cache hit! Requesting origin server for the file...')
         server_request = HTTPRequest.create_request(
             request.get_method(),
             request.get_host(),
@@ -430,12 +431,12 @@ class Proxy(object):
             print(e)
             response = HTTPResponse.create_response(INTRNL_ERR, 'Internal Server Error')
         else:
-            print('Response received from server...')
+            print('Response received from server')
+            print(f'Status code is {response.get_status_code()}')
             if response.get_status_code() == OK:
-                print(f'Status code is {OK}, caching...')
+                print(f'Writing to cache...')
                 self.cache.write(request.get_uri(), response.get_body())
             elif response.get_status_code() not in HTTP_CODES:
-                print(f'Status code is {response.get_status_code()}, no cache writing')
                 response = HTTPResponse.create_response(INTRNL_ERR, 'Internal Server Error',)
         return response
 
@@ -497,7 +498,7 @@ def main() -> None:
     try:
         proxy = Proxy(port)
     except OSError as e:
-        print(e)
+        print(f'Could not execute the web proxy: {e}')
     else:
         proxy.run()  
 
